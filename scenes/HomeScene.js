@@ -1,3 +1,4 @@
+// import Phaser from 'phaser'; // Removed as Phaser is loaded globally
 import BaseScene from './BaseScene.js';
 
 export default class HomeScene extends BaseScene {
@@ -208,27 +209,13 @@ export default class HomeScene extends BaseScene {
         } else {
             console.log('Starting HomeScene fresh, near center grid cell.');
         }
-        const initialWorldPos = this.gridToWorld(initialGridCol, initialGridRow);
-        console.log(`Home Player starting world pos: ${initialWorldPos.x}, ${initialWorldPos.y}`);
-
-        // --- 플레이어 생성 (Sprite 사용) ---
-        this.player = this.physics.add.sprite(initialWorldPos.x, initialWorldPos.y, 'player');
-        // 물리 몸체 크기/위치 조절 (필요시)
-        // this.player.body.setSize(width, height).setOffset(x, y);
-        if (this.player.body) {
-            this.player.body.setCollideWorldBounds(true);
-        } else {
-             console.error('Failed to enable physics on Home player sprite!'); return;
+        // BaseScene의 createPlayer 호출
+        this.player = this.createPlayer(initialGridCol, initialGridRow);
+        if (!this.player) {
+            console.error("HomeScene: Failed to create player!");
+            return; // 플레이어 생성 실패 시 중단
         }
-        this.player.setInteractive(); // 클릭은 가능하지만 특별한 동작 없음 (이동 중단 등)
-        this.player.on('pointerdown', (pointer, localX, localY, event) => {
-             event.stopPropagation();
-             if(this.player.body) this.player.body.stop();
-             this.movePath = null;
-             this.movePathIndex = -1;
-             console.log('Home player clicked, stopped movement.');
-        });
-        console.log('Home Player sprite created');
+        console.log(`HomeScene: Player created via BaseScene at grid [${initialGridCol}, ${initialGridRow}]`);
         // -----------------------------------------------
 
         // --- 정원으로 나가는 문 생성 (Sprite 사용) ---

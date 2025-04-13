@@ -1,3 +1,5 @@
+// import Phaser from 'phaser'; // Removed as Phaser is loaded globally
+
 export default class BaseScene extends Phaser.Scene {
     constructor(config) {
         super(config);
@@ -379,5 +381,128 @@ export default class BaseScene extends Phaser.Scene {
             }
         }
         return false; // 경로 끝에 도달하지 않음
+    }
+
+    // --- 임시 메시지 표시 함수 ---
+    showTemporaryMessage(message, duration = 2000) {
+        // 기존 메시지가 있으면 제거
+        if (this.temporaryMessageText) {
+            this.temporaryMessageText.destroy();
+        }
+
+        // 화면 상단 중앙에 텍스트 생성
+        this.temporaryMessageText = this.add.text(
+            this.cameras.main.width / 2,
+            this.uiHeight + 20, // UI 영역 바로 아래
+            message,
+            {
+                fontFamily: 'Arial',
+                fontSize: '18px',
+                color: '#ffffff',
+                backgroundColor: 'rgba(0,0,0,0.7)',
+                padding: { x: 10, y: 5 },
+                align: 'center'
+            }
+        ).setOrigin(0.5, 0).setScrollFactor(0).setDepth(20); // 가장 위에 보이도록
+
+        // 일정 시간 후 메시지 제거
+        this.time.delayedCall(duration, () => {
+            if (this.temporaryMessageText) {
+                this.temporaryMessageText.destroy();
+                this.temporaryMessageText = null; // 참조 제거
+            }
+        });
+    }
+
+    // --- 플레이어 생성 공통 함수 ---
+    createPlayer(initialCol, initialRow) {
+        const initialWorldPos = this.gridToWorld(initialCol, initialRow);
+        console.log(`BaseScene: Creating player at world [${initialWorldPos.x.toFixed(0)}, ${initialWorldPos.y.toFixed(0)}] (grid [${initialCol}, ${initialRow}])`);
+
+        const player = this.physics.add.sprite(initialWorldPos.x, initialWorldPos.y, 'player');
+        if (player.body) {
+            player.body.setCollideWorldBounds(true);
+            // 필요시 body 크기/오프셋 조정
+            // player.body.setSize(width, height).setOffset(x, y);
+        } else {
+            console.error('BaseScene: Failed to enable physics on player sprite!');
+            return null; // 오류 발생 시 null 반환
+        }
+        player.setInteractive(); // 클릭 상호작용 활성화 (이동 중단 등)
+        player.setData('gridCol', initialCol); // 초기 그리드 위치 저장
+        player.setData('gridRow', initialRow);
+
+        // 플레이어 클릭 시 이동 중단 리스너 (공통)
+        player.on('pointerdown', (pointer) => {
+            pointer.stopPropagation();
+            if(player.body) player.body.stop();
+            this.movePath = null;
+            this.movePathIndex = -1;
+            console.log('BaseScene: Player clicked, stopped movement.');
+            // 특정 Scene에서 추가 동작 필요 시, Scene 내부에서 별도 리스너 추가 가능
+        });
+
+        return player;
+    }
+
+    // --- 말풍선 생성 헬퍼 ---
+    createSpeechBubble(x, y, text, duration = 2000) {
+        // 기존 말풍선 제거 (한 번에 하나만 표시)
+        if (this.speechBubbleContainer) {
+            this.speechBubbleContainer.destroy();
+        }
+
+        const bubblePadding = 10;
+        const arrowHeight = 10;
+
+        // 텍스트 객체 먼저 생성해서 크기 계산
+        const textObject = this.add.text(0, 0, text, {
+            fontFamily: 'Arial',
+            fontSize: '14px',
+            color: '#000000',
+            backgroundColor: '#ffffff', // 임시 배경색으로 크기 측정 용이
+            padding: { x: bubblePadding, y: bubblePadding },
+            wordWrap: { width: 150 }, // 자동 줄바꿈 너비
+            align: 'center'
+        }).setOrigin(0.5, 1); // 텍스트 원점을 하단 중앙으로
+
+        // 텍스트 크기에 맞춰 버블 크기 계산
+        const bubbleWidth = textObject.width;
+        const bubbleHeight = textObject.height;
+
+        // 버블 배경 그래픽 생성 (텍스트 뒤에)
+        const bubble = this.add.graphics();
+        bubble.fillStyle(0xffffff, 1);
+        bubble.fillRoundedRect(
+            -bubbleWidth / 2, // 텍스트 원점 기준 상대 좌표
+            -(bubbleHeight + arrowHeight),
+            bubbleWidth,
+            bubbleHeight,
+            16 // 모서리 둥글기
+        );
+        // 말풍선 꼬리 (삼각형)
+        bubble.fillTriangle(
+            0, 0,             // 꼬리 끝점 (원점)
+            -10, -arrowHeight, // 왼쪽 위
+            10, -arrowHeight  // 오른쪽 위
+        );
+
+        // 텍스트 배경색 제거 및 위치 조정
+        textObject.setBackgroundColor(null); // 실제 배경은 Graphics가 담당
+        textObject.setPosition(0, -(arrowHeight + bubblePadding / 2)); // 버블 내부 Y 위치 조정 (padding 고려)
+
+        // 컨테이너로 묶기
+        this.speechBubbleContainer = this.add.container(x, y, [bubble, textObject]);
+        this.speechBubbleContainer.setDepth(15); // 메시지보다 위에, UI보다는 아래에?
+
+        // 일정 시간 후 제거
+        this.time.delayedCall(duration, () => {
+            if (this.speechBubbleContainer) {
+                this.speechBubbleContainer.destroy();
+                this.speechBubbleContainer = null;
+            }
+        });
+
+        return this.speechBubbleContainer; // 필요시 참조 반환
     }
 } 
