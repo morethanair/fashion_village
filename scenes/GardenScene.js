@@ -79,6 +79,119 @@ export default class GardenScene extends BaseScene {
         // BaseScene의 create 메서드 호출 (UI 및 시간 초기화)
         super.create();
         
+        // --- 롱클릭 관련 변수 초기화 ---
+        this.longPressTimer = null;
+        this.longPressDelay = 500; // 롱클릭 인식 시간 (밀리초)
+        this.longPressStartPosition = null; // 롱클릭 시작 위치
+        this.isLongPress = false; // 롱클릭 여부
+
+        // --- 기존 키보드 입력 리스너 추가 ---
+        this.input.keyboard.on('keydown-P', () => {
+            console.log('P key pressed'); // 로그 추가
+            this.togglePlantingMode(); 
+        });
+        this.input.keyboard.on('keydown-ESC', () => {
+            console.log('ESC key pressed'); // 로그 추가
+            this.disableAllModes();
+        });
+        
+        // --- 롱클릭 이벤트 처리 핸들러들 ---
+        this.input.on('pointerdown', (pointer) => {
+            // 롱클릭 타이머 시작
+            this.longPressStartPosition = { 
+                x: pointer.worldX, 
+                y: pointer.worldY,
+                grid: this.worldToGrid(pointer.worldX, pointer.worldY)
+            };
+            this.isLongPress = false;
+            
+            if (this.longPressTimer) {
+                this.longPressTimer.remove();
+            }
+            
+            this.longPressTimer = this.time.delayedCall(this.longPressDelay, () => {
+                // 롱클릭으로 판단
+                this.isLongPress = true;
+                
+                const targetGrid = this.longPressStartPosition.grid;
+                console.log(`Long press detected at grid [${targetGrid.col}, ${targetGrid.row}]`);
+                
+                // 셀이 점유되어 있는지 확인
+                const cellKey = `${targetGrid.col},${targetGrid.row}`;
+                if (this.occupiedCells.has(cellKey)) {
+                    console.log(`Cannot plant at [${targetGrid.col}, ${targetGrid.row}], cell occupied.`);
+                    return;
+                }
+                
+                // 플레이어의 현재 위치 확인
+                const playerGrid = this.worldToGrid(this.player.x, this.player.y);
+                
+                // 플레이어가 클릭한 셀과의 거리 계산
+                const manhattanDistance = Math.abs(playerGrid.col - targetGrid.col) + Math.abs(playerGrid.row - targetGrid.row);
+                
+                if (manhattanDistance <= 1) {
+                    // 플레이어가 인접해 있으면 바로 심기
+                    this.plantSeedAt(targetGrid.col, targetGrid.row);
+                } else {
+                    // 인접하지 않은 경우 인접 셀로 이동 후 심기
+                    console.log(`심을 위치 [${targetGrid.col}, ${targetGrid.row}] 선택. 인접 셀 탐색...`);
+                    const adjacentCell = this.findWalkableAdjacentCell(targetGrid.col, targetGrid.row);
+                    
+                    if (adjacentCell) {
+                        console.log(`인접 이동 가능 셀 [${adjacentCell.col}, ${adjacentCell.row}] 발견. 경로 탐색...`);
+                        this.isMovingToPlant = true;
+                        this.plantingTargetGrid = targetGrid; // 심을 위치는 원래 목표 셀
+                        this.isMovingToWater = false;
+                        this.isMovingToCat = false;
+                        this.isTransitioningToHome = false;
+                        this.moveToGridCell(adjacentCell.col, adjacentCell.row, (pathFound) => {
+                            if (!pathFound) {
+                                console.log('No path to adjacent cell found');
+                                this.isMovingToPlant = false;
+                            }
+                        });
+                    } else {
+                        console.log(`심을 위치 [${targetGrid.col}, ${targetGrid.row}] 주변에 접근 가능한 셀이 없습니다.`);
+                    }
+                }
+            }, [], this);
+        });
+        
+        this.input.on('pointermove', (pointer) => {
+            // 드래그 중이면 롱클릭 취소
+            if (this.longPressStartPosition) {
+                const distance = Phaser.Math.Distance.Between(
+                    pointer.worldX, pointer.worldY,
+                    this.longPressStartPosition.x, this.longPressStartPosition.y
+                );
+                
+                // 일정 거리 이상 드래그되면 롱클릭 취소
+                if (distance > 10) {
+                    if (this.longPressTimer) {
+                        this.longPressTimer.remove();
+                        this.longPressTimer = null;
+                    }
+                    this.longPressStartPosition = null;
+                }
+            }
+        });
+        
+        this.input.on('pointerup', (pointer) => {
+            // 롱클릭 타이머 취소
+            if (this.longPressTimer) {
+                this.longPressTimer.remove();
+                this.longPressTimer = null;
+            }
+            
+            // 롱클릭이 아니면 기존의 클릭 처리
+            if (!this.isLongPress) {
+                this.handleNormalClick(pointer);
+            }
+            
+            this.longPressStartPosition = null;
+            this.isLongPress = false;
+        });
+
         // 카메라 배경색은 BaseScene에서 설정되므로 제거
         // this.cameras.main.setBackgroundColor('#90EE90');
 
@@ -416,208 +529,6 @@ export default class GardenScene extends BaseScene {
             }
         });
         // ------------------------------------
-
-        // Scene 클릭 리스너
-        this.input.on('pointerdown', (pointer) => {
-            const targetGrid = this.worldToGrid(pointer.worldX, pointer.worldY);
-            
-            // 문 주변 클릭 체크 (문 클릭 자체는 문 이벤트 핸들러에서 처리)
-            const doorGridCol = Math.floor(this.gridWidth / 2);
-            const doorGridRow = 1;
-            const doorTargetRow = doorGridRow + 1;
-            
-            // 문이나 문 바로 아래 셀 근처를 클릭했는지 확인 (맨해튼 거리 사용)
-            const manhattanDistance = Math.abs(targetGrid.col - doorGridCol) + Math.abs(targetGrid.row - doorGridRow);
-            if (manhattanDistance <= 1) { // 문 또는 주변 셀 클릭
-                console.log('Clicked near door, moving to door entrance');
-                
-                // 문 자체를 클릭한 것이 아니라 주변 영역을 클릭한 경우는 이동만 수행 (전환은 하지 않음)
-                this.isTransitioningToHome = false; // 전환 플래그를 false로 설정
-                
-                // 문 아래 셀로 이동
-                console.log('Moving to door entrance...');
-                this.moveToGridCell(doorGridCol, doorTargetRow, (pathFound) => {
-                    if (!pathFound) {
-                        console.log('No path to door entrance found');
-                    }
-                });
-                return;
-            }
-
-            if (this.isPlantingMode) {
-                const cellKey = `${targetGrid.col},${targetGrid.row}`;
-                if (this.occupiedCells.has(cellKey)) {
-                    console.log(`Cannot plant at [${targetGrid.col}, ${targetGrid.row}], cell occupied.`);
-                    return;
-                }
-
-                // 플레이어의 현재 위치 확인
-                const playerGrid = this.worldToGrid(this.player.x, this.player.y);
-                console.log(`Player position: [${playerGrid.col}, ${playerGrid.row}], Target: [${targetGrid.col}, ${targetGrid.row}]`);
-                
-                // 플레이어가 클릭한 셀과의 거리 계산
-                // 1. 클릭한 셀에 플레이어가 있는 경우 - 맨해튼 거리 = 0
-                // 2. 클릭한 셀이 인접한 경우 - 맨해튼 거리 = 1 
-                // 3. 그 외의 경우 - 맨해튼 거리 > 1
-                const manhattanDistance = Math.abs(playerGrid.col - targetGrid.col) + Math.abs(playerGrid.row - targetGrid.row);
-                console.log(`Manhattan distance to planting location: ${manhattanDistance}`);
-                
-                // 플레이어가 심을 셀에 있거나 인접해 있으면 바로 심기
-                if (manhattanDistance <= 1) {
-                    // 이미 셀에 있거나 인접해 있으므로 바로 심기
-                    console.log(`Player at or adjacent to [${targetGrid.col}, ${targetGrid.row}], planting directly...`);
-                    
-                    // 심기 로직 실행
-                    const plantWorldPos = this.gridToWorld(targetGrid.col, targetGrid.row);
-                    
-                    const seedSprite = this.add.sprite(plantWorldPos.x, plantWorldPos.y, 'seed');
-                    const plantData = {
-                        type: 'seed', 
-                        stage: 0,
-                        plantedTime: this.time.now,
-                        lastWatered: 0, 
-                        gridCol: targetGrid.col, 
-                        gridRow: targetGrid.row,
-                        lastGrowthTime: 0,
-                        lastGrowthDay: this.gameTime.day, // 초기 식물 심은 날짜 추가
-                        lastGrowthHour: this.gameTime.hours, // 성장 시간 추가
-                        lastGrowthMinutes: this.gameTime.minutes // 성장 분 추가
-                    };
-                    seedSprite.setData('plantData', plantData);
-                    seedSprite.setInteractive({ useHandCursor: true });
-                    this.seeds.add(seedSprite);
-                    this.setupSeedClickListener(seedSprite);
-
-                    // 상태 및 Registry 업데이트
-                    this.occupiedCells.add(cellKey);
-                    
-                    try {
-                        this.easystar.avoidAdditionalPoint(targetGrid.col, targetGrid.row);
-                        console.log(`EasyStar obstacle set at [${targetGrid.col}, ${targetGrid.row}]`);
-                    } catch (e) {
-                        console.error("Error setting EasyStar obstacle:", e);
-                    }
-                    
-                    const currentState = this.registry.get('gardenState');
-                    currentState.plants.push(plantData);
-                    currentState.occupiedCells[cellKey] = true;
-                    this.registry.set('gardenState', currentState);
-
-                    console.log(`Cell [${targetGrid.col}, ${targetGrid.row}] marked occupied. Registry updated.`);
-                    
-                    // 심기 모드 비활성화
-                    this.isMovingToPlant = false;
-                    this.isPlantingMode = false;
-                    console.log("Seed planted, planting mode disabled. Press P to plant another seed.");
-                    return;
-                }
-
-                // --- 인접하지 않은 경우 기존 로직대로 인접 셀로 이동 ---
-                console.log(`심을 위치 [${targetGrid.col}, ${targetGrid.row}] 선택. 인접 셀 탐색...`);
-                const adjacentCell = this.findWalkableAdjacentCell(targetGrid.col, targetGrid.row);
-
-                if (adjacentCell) {
-                    console.log(`인접 이동 가능 셀 [${adjacentCell.col}, ${adjacentCell.row}] 발견. 경로 탐색...`);
-                    this.isMovingToPlant = true;
-                    this.plantingTargetGrid = targetGrid; // 심을 위치는 원래 목표 셀
-                    this.isMovingToWater = false;
-                    this.isMovingToCat = false;
-                    this.isTransitioningToHome = false;
-                    this.moveToGridCell(adjacentCell.col, adjacentCell.row, (pathFound) => {
-                        if (!pathFound) {
-                            console.log('No path to adjacent cell found');
-                            this.isMovingToPlant = false;
-                        }
-                    });
-                } else {
-                     console.log(`심을 위치 [${targetGrid.col}, ${targetGrid.row}] 주변에 접근 가능한 셀이 없습니다.`);
-                     // TODO: 화면 메시지
-                }
-                // ---------------------------------
-
-            } else {
-                // 식물이 있는 셀인지 확인
-                const seedToWater = this.seeds.getChildren().find(seed => {
-                    const seedData = seed.getData('plantData');
-                    return seedData && seedData.gridCol === targetGrid.col && seedData.gridRow === targetGrid.row;
-                });
-                
-                if (seedToWater) {
-                    // 식물이 있는 셀 클릭 - 플레이어 위치 확인
-                    const playerGrid = this.worldToGrid(this.player.x, this.player.y);
-                    const seedData = seedToWater.getData('plantData');
-                    const seedCol = seedData.gridCol;
-                    const seedRow = seedData.gridRow;
-                    
-                    // 플레이어와 식물의 거리 계산
-                    const manhattanDistance = Math.abs(playerGrid.col - seedCol) + Math.abs(playerGrid.row - seedRow);
-                    
-                    if (manhattanDistance <= 1) {
-                        // 플레이어가 식물에 인접한 경우 바로 물주기
-                        seedToWater.emit('pointerdown', { stopPropagation: () => {} });
-                    } else {
-                        // 멀리 있는 경우 식물 근처로 이동 후 물주기
-                        console.log(`Moving to water plant at [${seedCol}, ${seedRow}]`);
-                        const adjacentCell = this.findWalkableAdjacentCell(seedCol, seedRow);
-                        if (adjacentCell) {
-                            this.targetSeed = seedToWater;
-                            this.isMovingToWater = true;
-                            this.isMovingToPlant = false;
-                            this.isMovingToCat = false;
-                            this.isTransitioningToHome = false;
-                            this.moveToGridCell(adjacentCell.col, adjacentCell.row, (pathFound) => {
-                                if (!pathFound) {
-                                    console.log('No path to seed found');
-                                    this.isMovingToWater = false;
-                                    this.targetSeed = null;
-                                }
-                            });
-                        } else {
-                            console.log(`Cannot reach plant at [${seedCol}, ${seedRow}]`);
-                        }
-                    }
-                    return;
-                }
-                
-                // 일반 이동 (빈 셀로)
-                console.log(`Calculating path to grid [${targetGrid.col}, ${targetGrid.row}]...`);
-                
-                // 셀이 점유되어 있는지 확인
-                const cellKey = `${targetGrid.col},${targetGrid.row}`;
-                if (this.occupiedCells.has(cellKey)) {
-                    console.log(`Cannot move to [${targetGrid.col}, ${targetGrid.row}], cell occupied in this.occupiedCells.`);
-                    return;
-                }
-                
-                // Registry에서의 상태 확인
-                const gardenState = this.registry.get('gardenState');
-                if (gardenState.occupiedCells && gardenState.occupiedCells[cellKey]) {
-                    console.log(`Cannot move to [${targetGrid.col}, ${targetGrid.row}], cell occupied in registry.`);
-                    return;
-                }
-                
-                this.isTransitioningToHome = false;
-                this.isMovingToPlant = false;
-                this.isMovingToWater = false;
-                this.isMovingToCat = false;
-                this.moveToGridCell(targetGrid.col, targetGrid.row, (pathFound) => {
-                    if (!pathFound) {
-                        console.log(`No path to [${targetGrid.col}, ${targetGrid.row}] found`);
-                    }
-                });
-            }
-        });
-
-        // --- 키보드 입력 리스너 추가 --- 
-        this.input.keyboard.on('keydown-P', () => {
-            console.log('P key pressed'); // 로그 추가
-            this.togglePlantingMode(); 
-        });
-        this.input.keyboard.on('keydown-ESC', () => {
-            console.log('ESC key pressed'); // 로그 추가
-            this.disableAllModes();
-        });
-        // -----------------------------
 
         // --- 고양이 등장 타이머 시작 --- 
         this.catSpawnTimer = this.time.addEvent({
@@ -1065,115 +976,54 @@ export default class GardenScene extends BaseScene {
     // ---------------------------------
 
     update(time, delta) {
-        // --- BaseScene의 경로 이동 업데이트 함수 사용 ---
+        // BaseScene의 update 호출 (시간 업데이트 등)
+        super.update(time, delta);
+        
+        // --- 물리 시스템 기반 경로 이동 업데이트 ---
         const pathEndReached = this.updatePathMovement(delta);
         
-        // 경로 끝에 도달한 경우에만 도착 처리 로직 실행
+        // 경로 완료 시 추가 액션 실행
         if (pathEndReached) {
-            // --- 기존 도착 처리 로직 --- 
-            if (this.isMovingToPlant && this.plantingTargetGrid) {
-                const targetGrid = this.plantingTargetGrid;
-                const plantWorldPos = this.gridToWorld(targetGrid.col, targetGrid.row);
-                console.log(`Reached planting grid [${targetGrid.col}, ${targetGrid.row}], planting seed...`);
-
-                const seedSprite = this.add.sprite(plantWorldPos.x, plantWorldPos.y, 'seed');
-                const plantData = {
-                    type: 'seed', 
-                    stage: 0,
-                    plantedTime: this.time.now,
-                    lastWatered: 0, 
-                    gridCol: targetGrid.col, 
-                    gridRow: targetGrid.row,
-                    lastGrowthTime: 0,
-                    lastGrowthDay: this.gameTime.day, // 초기 식물 심은 날짜 추가
-                    lastGrowthHour: this.gameTime.hours, // 성장 시간 추가
-                    lastGrowthMinutes: this.gameTime.minutes // 성장 분 추가
-                };
-                seedSprite.setData('plantData', plantData);
-                seedSprite.setInteractive({ useHandCursor: true });
-                this.seeds.add(seedSprite);
-                this.setupSeedClickListener(seedSprite);
-
-                // --- 상태 및 Registry 업데이트 ---
-                const cellKey = `${targetGrid.col},${targetGrid.row}`;
-                this.occupiedCells.add(cellKey); // 로컬 Set 업데이트
-                
-                // EasyStar 장애물 설정 - 오류 수정됨
-                try {
-                    // getGrid 대신 직접 avoidAdditionalPoint만 사용
-                    this.easystar.avoidAdditionalPoint(targetGrid.col, targetGrid.row);
-                    console.log(`EasyStar obstacle set at [${targetGrid.col}, ${targetGrid.row}]`);
-                } catch (e) {
-                    console.error("Error setting EasyStar obstacle:", e);
-                }
-                
-                const currentState = this.registry.get('gardenState');
-                currentState.plants.push(plantData);
-                currentState.occupiedCells[cellKey] = true;
-                this.registry.set('gardenState', currentState);
-
-                console.log(`Cell [${targetGrid.col}, ${targetGrid.row}] marked occupied. Registry updated.`);
-                // --------------------------------
-
-                this.plantingTargetGrid = null;
-                // 심기 모드 비활성화
-                this.isMovingToPlant = false;
-                this.isPlantingMode = false;
-                console.log("Seed planted, planting mode disabled. Press P to plant another seed.");
-            } else if (this.isMovingToWater && this.targetSeed) {
-                console.log('Reached seed grid, watering...');
-                const plantData = this.targetSeed.getData('plantData');
-                if (plantData) {
-                    // 물주기 전 현재 성장 시간 정보 기록 (디버깅용)
-                    console.log(`물주기 전: [${plantData.gridCol}, ${plantData.gridRow}] 성장시간 - 일: ${plantData.lastGrowthDay || 'undefined'}, 시간: ${plantData.lastGrowthHour || 'undefined'}, 분: ${plantData.lastGrowthMinutes || 'undefined'}`);
-                    
-                    // 물주기 로직 실행
-                    plantData.lastWatered = this.time.now;
-                    console.log(`물주기 완료: [${plantData.gridCol}, ${plantData.gridRow}] 식물의 물 상태 업데이트됨`);
-
-                    // --- Registry 업데이트 --- 
-                    const currentState = this.registry.get('gardenState');
-                    const plantInRegistry = currentState.plants.find(p => p.gridCol === plantData.gridCol && p.gridRow === plantData.gridRow);
-                    if (plantInRegistry) {
-                        plantInRegistry.lastWatered = plantData.lastWatered;
-                        // 성장 시간 정보는 업데이트하지 않음 (물을 줄 때마다 성장 타이머가 리셋되지 않도록)
-                        this.registry.set('gardenState', currentState);
-                        console.log(`Registry 업데이트 완료: 물주기 상태만 변경됨`);
-                    }
-                    // -----------------------
-
-                    this.targetSeed.setTint(0xADD8E6);
-                    this.time.delayedCall(500, () => {
-                        if (this.targetSeed && this.targetSeed.active) {
-                             this.targetSeed.clearTint();
-                        }
-                    });
-                }
-                this.disableAllModes(); // 모든 모드 비활성화
-            } else if (this.isMovingToCat) {
-                console.log('고양이 옆 셀에 도착!');
-                
-                // 말풍선 생성 및 표시
-                if (this.cat && this.cat.visible) {
-                    this.createSpeechBubble(this.cat.x, this.cat.y - this.cat.height / 2 - 5, "야옹! 선물을 받아라냥!");
-                    
-                    // 잠시 후 고양이 숨기고 상태 초기화
-                    this.time.delayedCall(2100, () => { // 말풍선 지속시간보다 약간 길게
-                        this.hideCat(); 
-                        console.log('선물 획득! (임시)'); 
-                        // TODO: 실제 선물 획득 로직
-                    });
-                } else {
-                    // 혹시 고양이가 먼저 사라진 경우
-                     this.disableAllModes();
-                }
-            } else if (this.isTransitioningToHome) {
-                console.log('Player reached the door cell, starting transition to Home...');
+            console.log(`Path end reached!`);
+            
+            // 홈씬으로 전환 중이었다면
+            if (this.isTransitioningToHome) {
+                console.log('Reached door, starting transition to home...');
                 this.startHomeTransition();
-            } else {
-                console.log('Reached general grid cell via path.');
+            }
+            // 씨앗 심으러 가는 중이었다면
+            else if (this.isMovingToPlant && this.plantingTargetGrid) {
+                console.log(`Reached planting position adjacent to [${this.plantingTargetGrid.col}, ${this.plantingTargetGrid.row}]`);
+                
+                // 인접 위치에 도착했으므로 실제 심기 실행
+                this.plantSeedAt(this.plantingTargetGrid.col, this.plantingTargetGrid.row);
+                this.plantingTargetGrid = null;
+                this.isMovingToPlant = false;
+            }
+            // 물주러 가는 중이었다면
+            else if (this.isMovingToWater && this.targetSeed) {
+                console.log('Reached watering position, watering plant...');
+                
+                // 물주기 실행 (씨앗 클릭 이벤트 직접 트리거)
+                this.targetSeed.emit('pointerdown', { stopPropagation: () => {} });
+                this.targetSeed = null;
+                this.isMovingToWater = false;
+            }
+            // 고양이에게 가는 중이었다면
+            else if (this.isMovingToCat && this.cat.visible) {
+                console.log('Reached cat position, interacting with cat...');
+                
+                // 고양이와 상호작용 (고양이 클릭 이벤트 직접 트리거)
+                this.cat.emit('pointerdown', { stopPropagation: () => {} });
+                this.isMovingToCat = false;
+            }
+            // 일반 이동이었다면
+            else {
+                // 특별한 동작 없음, 경로 이동 완료 로그만 출력
+                // console.log('Reached destination.');
             }
         }
+        
         // --- 씨앗 성장 로직 (Registry 업데이트 추가) ---
         const currentTime = this.time.now;
         this.seeds.getChildren().forEach(seed => {
@@ -1298,5 +1148,211 @@ export default class GardenScene extends BaseScene {
             }
         });
         // -----------------------------------------
+    }
+
+    // --- 일반 클릭 처리 함수 ---
+    handleNormalClick(pointer) {
+        const targetGrid = this.worldToGrid(pointer.worldX, pointer.worldY);
+        
+        // 문 주변 클릭 체크 (문 클릭 자체는 문 이벤트 핸들러에서 처리)
+        const doorGridCol = Math.floor(this.gridWidth / 2);
+        const doorGridRow = 1;
+        const doorTargetRow = doorGridRow + 1;
+        
+        // 문이나 문 바로 아래 셀 근처를 클릭했는지 확인 (맨해튼 거리 사용)
+        const manhattanDistance = Math.abs(targetGrid.col - doorGridCol) + Math.abs(targetGrid.row - doorGridRow);
+        if (manhattanDistance <= 1) { // 문 또는 주변 셀 클릭
+            console.log('Clicked near door, moving to door entrance');
+            
+            // 문 자체를 클릭한 것이 아니라 주변 영역을 클릭한 경우는 이동만 수행 (전환은 하지 않음)
+            this.isTransitioningToHome = false; // 전환 플래그를 false로 설정
+            
+            // 문 아래 셀로 이동
+            console.log('Moving to door entrance...');
+            this.moveToGridCell(doorGridCol, doorTargetRow, (pathFound) => {
+                if (!pathFound) {
+                    console.log('No path to door entrance found');
+                }
+            });
+            return;
+        }
+
+        if (this.isPlantingMode) {
+            const cellKey = `${targetGrid.col},${targetGrid.row}`;
+            if (this.occupiedCells.has(cellKey)) {
+                console.log(`Cannot plant at [${targetGrid.col}, ${targetGrid.row}], cell occupied.`);
+                return;
+            }
+
+            // 플레이어의 현재 위치 확인
+            const playerGrid = this.worldToGrid(this.player.x, this.player.y);
+            console.log(`Player position: [${playerGrid.col}, ${playerGrid.row}], Target: [${targetGrid.col}, ${targetGrid.row}]`);
+            
+            // 플레이어가 클릭한 셀과의 거리 계산
+            // 1. 클릭한 셀에 플레이어가 있는 경우 - 맨해튼 거리 = 0
+            // 2. 클릭한 셀이 인접한 경우 - 맨해튼 거리 = 1 
+            // 3. 그 외의 경우 - 맨해튼 거리 > 1
+            const manhattanDistance = Math.abs(playerGrid.col - targetGrid.col) + Math.abs(playerGrid.row - targetGrid.row);
+            console.log(`Manhattan distance to planting location: ${manhattanDistance}`);
+            
+            // 플레이어가 심을 셀에 있거나 인접해 있으면 바로 심기
+            if (manhattanDistance <= 1) {
+                // 이미 셀에 있거나 인접해 있으므로 바로 심기
+                console.log(`Player at or adjacent to [${targetGrid.col}, ${targetGrid.row}], planting directly...`);
+                
+                this.plantSeedAt(targetGrid.col, targetGrid.row);
+                return;
+            }
+
+            // --- 인접하지 않은 경우 기존 로직대로 인접 셀로 이동 ---
+            console.log(`심을 위치 [${targetGrid.col}, ${targetGrid.row}] 선택. 인접 셀 탐색...`);
+            const adjacentCell = this.findWalkableAdjacentCell(targetGrid.col, targetGrid.row);
+
+            if (adjacentCell) {
+                console.log(`인접 이동 가능 셀 [${adjacentCell.col}, ${adjacentCell.row}] 발견. 경로 탐색...`);
+                this.isMovingToPlant = true;
+                this.plantingTargetGrid = targetGrid; // 심을 위치는 원래 목표 셀
+                this.isMovingToWater = false;
+                this.isMovingToCat = false;
+                this.isTransitioningToHome = false;
+                this.moveToGridCell(adjacentCell.col, adjacentCell.row, (pathFound) => {
+                    if (!pathFound) {
+                        console.log('No path to adjacent cell found');
+                        this.isMovingToPlant = false;
+                    }
+                });
+            } else {
+                 console.log(`심을 위치 [${targetGrid.col}, ${targetGrid.row}] 주변에 접근 가능한 셀이 없습니다.`);
+                 // TODO: 화면 메시지
+            }
+            // ---------------------------------
+
+        } else {
+            // 식물이 있는 셀인지 확인
+            const seedToWater = this.seeds.getChildren().find(seed => {
+                const seedData = seed.getData('plantData');
+                return seedData && seedData.gridCol === targetGrid.col && seedData.gridRow === targetGrid.row;
+            });
+            
+            if (seedToWater) {
+                // 식물이 있는 셀 클릭 - 플레이어 위치 확인
+                const playerGrid = this.worldToGrid(this.player.x, this.player.y);
+                const seedData = seedToWater.getData('plantData');
+                const seedCol = seedData.gridCol;
+                const seedRow = seedData.gridRow;
+                
+                // 플레이어와 식물의 거리 계산
+                const manhattanDistance = Math.abs(playerGrid.col - seedCol) + Math.abs(playerGrid.row - seedRow);
+                
+                if (manhattanDistance <= 1) {
+                    // 플레이어가 식물에 인접한 경우 바로 물주기
+                    seedToWater.emit('pointerdown', { stopPropagation: () => {} });
+                } else {
+                    // 멀리 있는 경우 식물 근처로 이동 후 물주기
+                    console.log(`Moving to water plant at [${seedCol}, ${seedRow}]`);
+                    const adjacentCell = this.findWalkableAdjacentCell(seedCol, seedRow);
+                    if (adjacentCell) {
+                        this.targetSeed = seedToWater;
+                        this.isMovingToWater = true;
+                        this.isMovingToPlant = false;
+                        this.isMovingToCat = false;
+                        this.isTransitioningToHome = false;
+                        this.moveToGridCell(adjacentCell.col, adjacentCell.row, (pathFound) => {
+                            if (!pathFound) {
+                                console.log('No path to seed found');
+                                this.isMovingToWater = false;
+                                this.targetSeed = null;
+                            }
+                        });
+                    } else {
+                        console.log(`Cannot reach plant at [${seedCol}, ${seedRow}]`);
+                    }
+                }
+                return;
+            }
+            
+            // 일반 이동 (빈 셀로)
+            console.log(`Calculating path to grid [${targetGrid.col}, ${targetGrid.row}]...`);
+            
+            // 셀이 점유되어 있는지 확인
+            const cellKey = `${targetGrid.col},${targetGrid.row}`;
+            if (this.occupiedCells.has(cellKey)) {
+                console.log(`Cannot move to [${targetGrid.col}, ${targetGrid.row}], cell occupied in this.occupiedCells.`);
+                return;
+            }
+            
+            // Registry에서의 상태 확인
+            const gardenState = this.registry.get('gardenState');
+            if (gardenState.occupiedCells && gardenState.occupiedCells[cellKey]) {
+                console.log(`Cannot move to [${targetGrid.col}, ${targetGrid.row}], cell occupied in registry.`);
+                return;
+            }
+            
+            this.isTransitioningToHome = false;
+            this.isMovingToPlant = false;
+            this.isMovingToWater = false;
+            this.isMovingToCat = false;
+            this.moveToGridCell(targetGrid.col, targetGrid.row, (pathFound) => {
+                if (!pathFound) {
+                    console.log(`No path to [${targetGrid.col}, ${targetGrid.row}] found`);
+                }
+            });
+        }
+    }
+    
+    // --- 씨앗 심기 함수 ---
+    plantSeedAt(gridCol, gridRow) {
+        // 심기 로직 실행
+        const plantWorldPos = this.gridToWorld(gridCol, gridRow);
+        
+        const seedSprite = this.add.sprite(plantWorldPos.x, plantWorldPos.y, 'seed');
+        const plantData = {
+            type: 'seed', 
+            stage: 0,
+            plantedTime: this.time.now,
+            lastWatered: 0, 
+            gridCol: gridCol, 
+            gridRow: gridRow,
+            lastGrowthTime: 0,
+            lastGrowthDay: this.gameTime.day, // 초기 식물 심은 날짜 추가
+            lastGrowthHour: this.gameTime.hours, // 성장 시간 추가
+            lastGrowthMinutes: this.gameTime.minutes // 성장 분 추가
+        };
+        seedSprite.setData('plantData', plantData);
+        seedSprite.setInteractive({ useHandCursor: true });
+        this.seeds.add(seedSprite);
+        this.setupSeedClickListener(seedSprite);
+
+        // 상태 및 Registry 업데이트
+        const cellKey = `${gridCol},${gridRow}`;
+        this.occupiedCells.add(cellKey);
+        
+        try {
+            this.easystar.avoidAdditionalPoint(gridCol, gridRow);
+            console.log(`EasyStar obstacle set at [${gridCol}, ${gridRow}]`);
+        } catch (e) {
+            console.error("Error setting EasyStar obstacle:", e);
+        }
+        
+        const currentState = this.registry.get('gardenState');
+        currentState.plants.push(plantData);
+        currentState.occupiedCells[cellKey] = true;
+        this.registry.set('gardenState', currentState);
+
+        console.log(`Cell [${gridCol}, ${gridRow}] marked occupied. Registry updated.`);
+        
+        // 심기 모드 비활성화 (P 키 사용 시에만 적용)
+        if (this.isPlantingMode) {
+            this.isMovingToPlant = false;
+            this.isPlantingMode = false;
+            console.log("Seed planted, planting mode disabled. Press P to plant another seed.");
+        } else {
+            console.log("Seed planted via long press.");
+        }
+        
+        // 디버깅 그래픽 갱신
+        if (this.debugGraphics) {
+            this.refreshDebugGraphics();
+        }
     }
 } 
