@@ -1004,8 +1004,35 @@ export default class GardenScene extends BaseScene {
             else if (this.isMovingToWater && this.targetSeed) {
                 console.log('Reached watering position, watering plant...');
                 
-                // 물주기 실행 (씨앗 클릭 이벤트 직접 트리거)
-                this.targetSeed.emit('pointerdown', { stopPropagation: () => {} });
+                // 물주기 직접 실행 (이벤트 대신 직접 로직 호출)
+                const seedData = this.targetSeed.getData('plantData');
+                if (seedData) {
+                    // 물주기 전 현재 성장 시간 정보 기록 (디버깅용)
+                    console.log(`물주기 전: [${seedData.gridCol}, ${seedData.gridRow}] 성장시간 - 일: ${seedData.lastGrowthDay || 'undefined'}, 시간: ${seedData.lastGrowthHour || 'undefined'}, 분: ${seedData.lastGrowthMinutes || 'undefined'}`);
+                    
+                    // 물주기 로직 실행
+                    seedData.lastWatered = this.time.now;
+                    console.log(`물주기 완료: [${seedData.gridCol}, ${seedData.gridRow}] 식물의 물 상태 업데이트됨`);
+                    
+                    // --- Registry 업데이트 --- 
+                    const currentState = this.registry.get('gardenState');
+                    const plantInRegistry = currentState.plants.find(p => p.gridCol === seedData.gridCol && p.gridRow === seedData.gridRow);
+                    if (plantInRegistry) {
+                        plantInRegistry.lastWatered = seedData.lastWatered;
+                        // 성장 시간 정보는 업데이트하지 않음 (물을 줄 때마다 성장 타이머가 리셋되지 않도록)
+                        this.registry.set('gardenState', currentState);
+                        console.log(`Registry 업데이트 완료: 물주기 상태만 변경됨`);
+                    }
+                    
+                    // 시각적 효과
+                    this.targetSeed.setTint(0xADD8E6);
+                    this.time.delayedCall(500, () => {
+                        if (this.targetSeed && this.targetSeed.active) {
+                            this.targetSeed.clearTint();
+                        }
+                    });
+                }
+                
                 this.targetSeed = null;
                 this.isMovingToWater = false;
             }
@@ -1013,8 +1040,18 @@ export default class GardenScene extends BaseScene {
             else if (this.isMovingToCat && this.cat.visible) {
                 console.log('Reached cat position, interacting with cat...');
                 
-                // 고양이와 상호작용 (고양이 클릭 이벤트 직접 트리거)
-                this.cat.emit('pointerdown', { stopPropagation: () => {} });
+                // 고양이와 상호작용
+                const catData = this.cat.data.values;
+                // 말풍선 생성 및 표시
+                this.createSpeechBubble(this.cat.x, this.cat.y - this.cat.height / 2 - 5, "야옹! 선물을 받아라냥!");
+                
+                // 잠시 후 고양이 숨기고 상태 초기화
+                this.time.delayedCall(2100, () => { // 말풍선 지속시간보다 약간 길게
+                    this.hideCat(); 
+                    console.log('선물 획득! (임시)'); 
+                    // TODO: 실제 선물 획득 로직
+                });
+                
                 this.isMovingToCat = false;
             }
             // 일반 이동이었다면
@@ -1246,7 +1283,33 @@ export default class GardenScene extends BaseScene {
                 
                 if (manhattanDistance <= 1) {
                     // 플레이어가 식물에 인접한 경우 바로 물주기
-                    seedToWater.emit('pointerdown', { stopPropagation: () => {} });
+                    const seedData = seedToWater.getData('plantData');
+                    if (seedData) {
+                        // 물주기 전 현재 성장 시간 정보 기록 (디버깅용)
+                        console.log(`물주기 전: [${seedData.gridCol}, ${seedData.gridRow}] 성장시간 - 일: ${seedData.lastGrowthDay || 'undefined'}, 시간: ${seedData.lastGrowthHour || 'undefined'}, 분: ${seedData.lastGrowthMinutes || 'undefined'}`);
+                        
+                        // 물주기 로직 실행
+                        seedData.lastWatered = this.time.now;
+                        console.log(`물주기 완료: [${seedData.gridCol}, ${seedData.gridRow}] 식물의 물 상태 업데이트됨`);
+                        
+                        // --- Registry 업데이트 --- 
+                        const currentState = this.registry.get('gardenState');
+                        const plantInRegistry = currentState.plants.find(p => p.gridCol === seedData.gridCol && p.gridRow === seedData.gridRow);
+                        if (plantInRegistry) {
+                            plantInRegistry.lastWatered = seedData.lastWatered;
+                            // 성장 시간 정보는 업데이트하지 않음 (물을 줄 때마다 성장 타이머가 리셋되지 않도록)
+                            this.registry.set('gardenState', currentState);
+                            console.log(`Registry 업데이트 완료: 물주기 상태만 변경됨`);
+                        }
+                        
+                        // 시각적 효과
+                        seedToWater.setTint(0xADD8E6);
+                        this.time.delayedCall(500, () => {
+                            if (seedToWater && seedToWater.active) {
+                                seedToWater.clearTint();
+                            }
+                        });
+                    }
                 } else {
                     // 멀리 있는 경우 식물 근처로 이동 후 물주기
                     console.log(`Moving to water plant at [${seedCol}, ${seedRow}]`);
