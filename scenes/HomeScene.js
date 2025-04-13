@@ -9,11 +9,12 @@ export default class HomeScene extends BaseScene {
         this.isTransitioningToGarden = false;
         this.arrivalData = null; // 도착 정보 저장 변수 (grid 포함)
 
-        // Grid Config - BaseScene에서 상속받음
+        // Grid Config (GardenScene과 동일하게)
         this.tileSize = 32;
-        // gridWidth와 gridHeight는 BaseScene에서 상속받음
+        this.gridWidth = Math.floor(640 / this.tileSize);
+        this.gridHeight = Math.floor(640 / this.tileSize);
         // HomeScene에서는 occupiedCells가 필요 없을 수 있음 (식물 없으므로)
-        console.log(`HomeScene Grid initialized with default values`);
+        console.log(`HomeScene Grid initialized: ${this.gridWidth}x${this.gridHeight}`);
         
         // EasyStar Config
         this.easystar = null;
@@ -158,13 +159,6 @@ export default class HomeScene extends BaseScene {
             this.easystar.avoidAdditionalPoint(col, bottomRow2);
         }
         
-        // 가장 하단 행에도 벽 타일 추가 (연두색 띠와 검은 픽셀 문제 해결)
-        const veryBottomRow = this.gridHeight;
-        for (let col = 0; col < this.gridWidth; col++) {
-            // 맨 아래 행 전체를 벽 타일로 채움
-            wallLayer.putTileAt(0, col, veryBottomRow);
-        }
-        
         // 왼쪽 아래 코너 (0, 1 컬럼의 -1, -2 행)와 오른쪽 끝 컬럼에 wall.png 타일 추가
         // 이 부분은 분홍색 벽지가 아닌 일반 벽으로 설정
         const leftBottomCols = [0, 1]; // 0컬럼과 1컬럼
@@ -301,14 +295,7 @@ export default class HomeScene extends BaseScene {
             // 셀이 점유되어 있는지 확인 (벽, 가구 등)
             const cellKey = `${targetGrid.col},${targetGrid.row}`;
             if (this.occupiedCells.has(cellKey)) {
-                console.log(`Cannot move to [${targetGrid.col},${targetGrid.row}], cell occupied in this.occupiedCells.`);
-                return;
-            }
-            
-            // Registry에서의 상태 확인
-            const homeState = this.registry.get('homeState') || { occupiedCells: {} };
-            if (homeState.occupiedCells && homeState.occupiedCells[cellKey]) {
-                console.log(`Cannot move to [${targetGrid.col},${targetGrid.row}], cell occupied in registry.`);
+                console.log(`Cannot move to [${targetGrid.col}, ${targetGrid.row}], cell occupied.`);
                 return;
             }
             
