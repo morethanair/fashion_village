@@ -581,6 +581,21 @@ export default class GardenScene extends BaseScene {
                 
                 // 일반 이동 (빈 셀로)
                 console.log(`Calculating path to grid [${targetGrid.col}, ${targetGrid.row}]...`);
+                
+                // 셀이 점유되어 있는지 확인
+                const cellKey = `${targetGrid.col},${targetGrid.row}`;
+                if (this.occupiedCells.has(cellKey)) {
+                    console.log(`Cannot move to [${targetGrid.col}, ${targetGrid.row}], cell occupied in this.occupiedCells.`);
+                    return;
+                }
+                
+                // Registry에서의 상태 확인
+                const gardenState = this.registry.get('gardenState');
+                if (gardenState.occupiedCells && gardenState.occupiedCells[cellKey]) {
+                    console.log(`Cannot move to [${targetGrid.col}, ${targetGrid.row}], cell occupied in registry.`);
+                    return;
+                }
+                
                 this.isTransitioningToHome = false;
                 this.isMovingToPlant = false;
                 this.isMovingToWater = false;
@@ -606,12 +621,12 @@ export default class GardenScene extends BaseScene {
 
         // --- 고양이 등장 타이머 시작 --- 
         this.catSpawnTimer = this.time.addEvent({
-            delay: 15000, // 15초마다 등장 시도 (테스트용)
-            callback: this.trySpawnCat, // 호출할 함수
-            callbackScope: this, // 함수의 this 컨텍스트
-            loop: true // 반복
+            delay: 10000, // 10초마다 체크 (테스트용)
+            callback: this.trySpawnCat,
+            callbackScope: this, 
+            loop: true
         });
-        console.log('Cat spawn timer started');
+        console.log('Cat spawn timer started.');
         // -----------------------------
 
         this.cameras.main.fadeIn(500, 0, 0, 0);
@@ -702,6 +717,47 @@ export default class GardenScene extends BaseScene {
         // ---------------------------
 
         console.log('Garden Scene Created and Player Initialized for Grid');
+        
+        console.log(`Grid initialized with cell registry: occupiedCells size = ${this.occupiedCells.size}`);
+        
+        // EasyStar 경로 계산 시각화를 위한 그래픽 객체
+        this.pathGraphics = this.add.graphics();
+        
+        // 디버깅: 점유된 셀을 표시
+        if (this.physics.config.debug) {
+            this.debugGraphics = this.add.graphics({ fillStyle: { color: 0xff0000, alpha: 0.3 } });
+            this.refreshDebugGraphics();
+        }
+    }
+
+    // 디버깅 그래픽 갱신 함수
+    refreshDebugGraphics() {
+        if (!this.debugGraphics || !this.physics.config.debug) return;
+        
+        this.debugGraphics.clear();
+        this.occupiedCells.forEach(cellKey => {
+            const [col, row] = cellKey.split(',').map(Number);
+            if (!isNaN(col) && !isNaN(row)) {
+                const worldX = col * this.tileSize;
+                const worldY = row * this.tileSize + this.uiHeight;
+                this.debugGraphics.fillRect(worldX, worldY, this.tileSize, this.tileSize);
+            }
+        });
+        
+        const gardenState = this.registry.get('gardenState');
+        if (gardenState && gardenState.occupiedCells) {
+            Object.keys(gardenState.occupiedCells).forEach(cellKey => {
+                if (!this.occupiedCells.has(cellKey)) {
+                    const [col, row] = cellKey.split(',').map(Number);
+                    if (!isNaN(col) && !isNaN(row)) {
+                        const worldX = col * this.tileSize;
+                        const worldY = row * this.tileSize + this.uiHeight;
+                        this.debugGraphics.lineStyle(2, 0x00ff00, 0.5);
+                        this.debugGraphics.strokeRect(worldX, worldY, this.tileSize, this.tileSize);
+                    }
+                }
+            });
+        }
     }
 
     // --- 말풍선 생성 헬퍼 ---

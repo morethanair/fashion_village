@@ -33,7 +33,7 @@ export default class HomeScene extends BaseScene {
         // GardenScene에서 로드했더라도 명시적으로 추가하는 것이 좋음
         this.load.image('player', 'assets/sprites/player.png'); // 플레이어는 필요
         this.load.image('door', 'assets/sprites/door.png');     // 문 이미지 로드 추가
-        this.load.image('tiles_home', 'assets/tiles/wood_floor.png'); // 홈 바닥 타일 로드 (새 키 사용)
+        this.load.image('tiles_home', 'assets/tiles/tile_floor.png'); // 홈 바닥 타일 로드 (새 키 사용)
         this.load.image('wall', 'assets/tiles/wall.png'); // 벽 타일 이미지 로드 추가
         this.load.image('pink_wall', 'assets/tiles/pink_wall.png'); // 분홍색 벽지 타일 로드
     }
@@ -301,7 +301,14 @@ export default class HomeScene extends BaseScene {
             // 셀이 점유되어 있는지 확인 (벽, 가구 등)
             const cellKey = `${targetGrid.col},${targetGrid.row}`;
             if (this.occupiedCells.has(cellKey)) {
-                console.log(`Cannot move to [${targetGrid.col}, ${targetGrid.row}], cell occupied.`);
+                console.log(`Cannot move to [${targetGrid.col},${targetGrid.row}], cell occupied in this.occupiedCells.`);
+                return;
+            }
+            
+            // Registry에서의 상태 확인
+            const homeState = this.registry.get('homeState') || { occupiedCells: {} };
+            if (homeState.occupiedCells && homeState.occupiedCells[cellKey]) {
+                console.log(`Cannot move to [${targetGrid.col},${targetGrid.row}], cell occupied in registry.`);
                 return;
             }
             
