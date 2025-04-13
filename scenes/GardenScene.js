@@ -535,39 +535,51 @@ export default class GardenScene extends BaseScene {
                 }
                 // ---------------------------------
 
-            } else if (this.isWateringMode) {
-                // 그리드 위에 식물이 있는지 확인
-                const cellKey = `${targetGrid.col},${targetGrid.row}`;
-                
-                // 식물이 있는지 확인
-                const hasSeed = this.seeds.getChildren().some(seed => {
+            } else {
+                // 식물이 있는 셀인지 확인
+                const seedToWater = this.seeds.getChildren().find(seed => {
                     const seedData = seed.getData('plantData');
                     return seedData && seedData.gridCol === targetGrid.col && seedData.gridRow === targetGrid.row;
                 });
                 
-                if (!hasSeed) {
-                    console.log(`No plant at [${targetGrid.col}, ${targetGrid.row}], switching to normal movement.`);
-                    // 식물이 없으므로 물주기 모드 비활성화하고 일반 이동
-                    this.isWateringMode = false;
+                if (seedToWater) {
+                    // 식물이 있는 셀 클릭 - 플레이어 위치 확인
+                    const playerGrid = this.worldToGrid(this.player.x, this.player.y);
+                    const seedData = seedToWater.getData('plantData');
+                    const seedCol = seedData.gridCol;
+                    const seedRow = seedData.gridRow;
                     
-                    // 일반 이동 로직 실행
-                    console.log(`Calculating path to grid [${targetGrid.col}, ${targetGrid.row}]...`);
-                    this.isTransitioningToHome = false;
-                    this.isMovingToPlant = false;
-                    this.isMovingToWater = false;
-                    this.isMovingToCat = false;
-                    this.moveToGridCell(targetGrid.col, targetGrid.row, (pathFound) => {
-                        if (!pathFound) {
-                            console.log(`No path to [${targetGrid.col}, ${targetGrid.row}] found`);
+                    // 플레이어와 식물의 거리 계산
+                    const manhattanDistance = Math.abs(playerGrid.col - seedCol) + Math.abs(playerGrid.row - seedRow);
+                    
+                    if (manhattanDistance <= 1) {
+                        // 플레이어가 식물에 인접한 경우 바로 물주기
+                        seedToWater.emit('pointerdown', { stopPropagation: () => {} });
+                    } else {
+                        // 멀리 있는 경우 식물 근처로 이동 후 물주기
+                        console.log(`Moving to water plant at [${seedCol}, ${seedRow}]`);
+                        const adjacentCell = this.findWalkableAdjacentCell(seedCol, seedRow);
+                        if (adjacentCell) {
+                            this.targetSeed = seedToWater;
+                            this.isMovingToWater = true;
+                            this.isMovingToPlant = false;
+                            this.isMovingToCat = false;
+                            this.isTransitioningToHome = false;
+                            this.moveToGridCell(adjacentCell.col, adjacentCell.row, (pathFound) => {
+                                if (!pathFound) {
+                                    console.log('No path to seed found');
+                                    this.isMovingToWater = false;
+                                    this.targetSeed = null;
+                                }
+                            });
+                        } else {
+                            console.log(`Cannot reach plant at [${seedCol}, ${seedRow}]`);
                         }
-                    });
+                    }
                     return;
                 }
                 
-                // 물 주기 모드는 씨앗 클릭 리스너에서 처리
-                console.log('Watering mode active. Click on a seed to water.');
-            } else {
-                // 일반 이동
+                // 일반 이동 (빈 셀로)
                 console.log(`Calculating path to grid [${targetGrid.col}, ${targetGrid.row}]...`);
                 this.isTransitioningToHome = false;
                 this.isMovingToPlant = false;
@@ -585,10 +597,6 @@ export default class GardenScene extends BaseScene {
         this.input.keyboard.on('keydown-P', () => {
             console.log('P key pressed'); // 로그 추가
             this.togglePlantingMode(); 
-        });
-        this.input.keyboard.on('keydown-W', () => {
-            console.log('W key pressed'); // 로그 추가
-            this.toggleWateringMode();
         });
         this.input.keyboard.on('keydown-ESC', () => {
             console.log('ESC key pressed'); // 로그 추가
@@ -763,7 +771,6 @@ export default class GardenScene extends BaseScene {
     togglePlantingMode() {
         this.isPlantingMode = !this.isPlantingMode;
         if (this.isPlantingMode) {
-            this.isWateringMode = false; // 다른 모드 비활성화
             console.log('Planting mode ENABLED (Press P again or ESC to disable)');
         } else {
             console.log('Planting mode DISABLED');
@@ -773,20 +780,8 @@ export default class GardenScene extends BaseScene {
         // this.updatePlayerColor(); // 색상 변경 호출 제거
     }
 
-    toggleWateringMode() {
-        this.isWateringMode = !this.isWateringMode;
-        if (this.isWateringMode) {
-            this.isPlantingMode = false; // 다른 모드 비활성화
-            console.log('Watering mode ENABLED (Press W again or ESC to disable)');
-        } else {
-            console.log('Watering mode DISABLED');
-        }
-        // this.updatePlayerColor(); // 색상 변경 호출 제거
-    }
-
     disableAllModes() {
         this.isPlantingMode = false;
-        this.isWateringMode = false;
         this.isMovingToPlant = false;
         this.isMovingToWater = false;
         this.isMovingToCat = false; // 추가
@@ -808,79 +803,74 @@ export default class GardenScene extends BaseScene {
     setupSeedClickListener(seed) {
         seed.off('pointerdown');
         seed.on('pointerdown', (pointer, localX, localY, event) => {
-            if (this.isWateringMode) {
-                event.stopPropagation();
-                const seedData = seed.getData('plantData');
-                if (!seedData) return;
-                const seedCol = seedData.gridCol;
-                const seedRow = seedData.gridRow;
-                console.log(`Seed at [${seedCol}, ${seedRow}] clicked. Checking if player is adjacent...`);
+            event.stopPropagation();
+            const seedData = seed.getData('plantData');
+            if (!seedData) return;
+            const seedCol = seedData.gridCol;
+            const seedRow = seedData.gridRow;
+            console.log(`Seed at [${seedCol}, ${seedRow}] clicked. Checking if player is adjacent...`);
 
-                // 플레이어의 현재 위치 확인
-                const playerGrid = this.worldToGrid(this.player.x, this.player.y);
+            // 플레이어의 현재 위치 확인
+            const playerGrid = this.worldToGrid(this.player.x, this.player.y);
+            
+            // 플레이어와 씨앗과의 거리 계산 (맨해튼 거리)
+            // 0: 플레이어가 씨앗이 있는 셀에 있음
+            // 1: 인접한 셀에 있음
+            // >1: 멀리 있음
+            const manhattanDistance = Math.abs(playerGrid.col - seedCol) + Math.abs(playerGrid.row - seedRow);
+            
+            // 플레이어가 씨앗 위에 있거나 인접해 있으면 바로 물주기
+            if (manhattanDistance <= 1) {
+                // 이미 씨앗에 있거나 인접해 있으므로 바로 물주기
+                console.log(`Player at or adjacent to plant at [${seedCol}, ${seedRow}], watering directly...`);
                 
-                // 플레이어와 씨앗과의 거리 계산 (맨해튼 거리)
-                // 0: 플레이어가 씨앗이 있는 셀에 있음
-                // 1: 인접한 셀에 있음
-                // >1: 멀리 있음
-                const manhattanDistance = Math.abs(playerGrid.col - seedCol) + Math.abs(playerGrid.row - seedRow);
+                // 물주기 전 현재 성장 시간 정보 기록 (디버깅용)
+                console.log(`물주기 전: [${seedData.gridCol}, ${seedData.gridRow}] 성장시간 - 일: ${seedData.lastGrowthDay || 'undefined'}, 시간: ${seedData.lastGrowthHour || 'undefined'}, 분: ${seedData.lastGrowthMinutes || 'undefined'}`);
                 
-                // 플레이어가 씨앗 위에 있거나 인접해 있으면 바로 물주기
-                if (manhattanDistance <= 1) {
-                    // 이미 씨앗에 있거나 인접해 있으므로 바로 물주기
-                    console.log(`Player at or adjacent to plant at [${seedCol}, ${seedRow}], watering directly...`);
-                    
-                    // 물주기 전 현재 성장 시간 정보 기록 (디버깅용)
-                    console.log(`물주기 전: [${seedData.gridCol}, ${seedData.gridRow}] 성장시간 - 일: ${seedData.lastGrowthDay || 'undefined'}, 시간: ${seedData.lastGrowthHour || 'undefined'}, 분: ${seedData.lastGrowthMinutes || 'undefined'}`);
-                    
-                    // 물주기 로직 실행
-                    seedData.lastWatered = this.time.now;
-                    console.log(`물주기 완료: [${seedData.gridCol}, ${seedData.gridRow}] 식물의 물 상태 업데이트됨`);
-                    
-                    // --- Registry 업데이트 --- 
-                    const currentState = this.registry.get('gardenState');
-                    const plantInRegistry = currentState.plants.find(p => p.gridCol === seedData.gridCol && p.gridRow === seedData.gridRow);
-                    if (plantInRegistry) {
-                        plantInRegistry.lastWatered = seedData.lastWatered;
-                        // 성장 시간 정보는 업데이트하지 않음 (물을 줄 때마다 성장 타이머가 리셋되지 않도록)
-                        this.registry.set('gardenState', currentState);
-                        console.log(`Registry 업데이트 완료: 물주기 상태만 변경됨`);
+                // 물주기 로직 실행
+                seedData.lastWatered = this.time.now;
+                console.log(`물주기 완료: [${seedData.gridCol}, ${seedData.gridRow}] 식물의 물 상태 업데이트됨`);
+                
+                // --- Registry 업데이트 --- 
+                const currentState = this.registry.get('gardenState');
+                const plantInRegistry = currentState.plants.find(p => p.gridCol === seedData.gridCol && p.gridRow === seedData.gridRow);
+                if (plantInRegistry) {
+                    plantInRegistry.lastWatered = seedData.lastWatered;
+                    // 성장 시간 정보는 업데이트하지 않음 (물을 줄 때마다 성장 타이머가 리셋되지 않도록)
+                    this.registry.set('gardenState', currentState);
+                    console.log(`Registry 업데이트 완료: 물주기 상태만 변경됨`);
+                }
+                
+                // 시각적 효과
+                seed.setTint(0xADD8E6);
+                this.time.delayedCall(500, () => {
+                    if (seed && seed.active) {
+                        seed.clearTint();
                     }
-                    
-                    // 시각적 효과
-                    seed.setTint(0xADD8E6);
-                    this.time.delayedCall(500, () => {
-                        if (seed && seed.active) {
-                            seed.clearTint();
-                        }
-                    });
-                    return;
-                }
+                });
+                return;
+            }
 
-                // 인접하지 않은 경우 인접 셀로 이동 후 물주기
-                console.log(`Finding adjacent cell to plant at [${seedCol}, ${seedRow}]...`);
-                const adjacentCell = this.findWalkableAdjacentCell(seedCol, seedRow);
+            // 인접하지 않은 경우 인접 셀로 이동 후 물주기
+            console.log(`Finding adjacent cell to plant at [${seedCol}, ${seedRow}]...`);
+            const adjacentCell = this.findWalkableAdjacentCell(seedCol, seedRow);
 
-                if (adjacentCell) {
-                    console.log(`Found adjacent walkable cell at [${adjacentCell.col}, ${adjacentCell.row}]. Calculating path...`);
-                    this.targetSeed = seed;
-                    this.isMovingToWater = true;
-                    this.isMovingToPlant = false;
-                    this.isMovingToCat = false;
-                    this.isTransitioningToHome = false;
-                    this.moveToGridCell(adjacentCell.col, adjacentCell.row, (pathFound) => {
-                        if (!pathFound) {
-                            console.log('No path to seed found');
-                            this.isMovingToWater = false;
-                            this.targetSeed = null;
-                        }
-                    });
-                } else {
-                    console.log(`Cannot reach seed at [${seedCol}, ${seedRow}] to water. No adjacent walkable cell.`);
-                }
+            if (adjacentCell) {
+                console.log(`Found adjacent walkable cell at [${adjacentCell.col}, ${adjacentCell.row}]. Calculating path...`);
+                this.targetSeed = seed;
+                this.isMovingToWater = true;
+                this.isMovingToPlant = false;
+                this.isMovingToCat = false;
+                this.isTransitioningToHome = false;
+                this.moveToGridCell(adjacentCell.col, adjacentCell.row, (pathFound) => {
+                    if (!pathFound) {
+                        console.log('No path to seed found');
+                        this.isMovingToWater = false;
+                        this.targetSeed = null;
+                    }
+                });
             } else {
-                 const seedData = seed.getData('plantData');
-                 if(seedData) console.log(`Seed clicked at [${seedData.gridCol}, ${seedData.gridRow}], but not in watering mode.`);
+                console.log(`Cannot reach seed at [${seedCol}, ${seedRow}] to water. No adjacent walkable cell.`);
             }
         });
     }
